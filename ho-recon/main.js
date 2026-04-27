@@ -340,6 +340,25 @@ function parseTallyExcel(rawRows, filePath) {
     headerRowIdx = 0;
   }
 
+  // Tally dual-column "Particulars" layout fix:
+  // Some Tally exports lay the data out as
+  //   [Date, Dr/Cr, Party Name, Vch Type, Vch No., Debit, Credit]
+  // where the "Particulars" header labels the Dr/Cr column but the actual
+  // party / narration content sits in the column to its RIGHT (an unlabeled
+  // column). Detect this by peeking the first data row: if the cell at
+  // colParticulars is just "Dr" / "Cr" / "Dr." / "Cr." and the next column
+  // has real content, shift colParticulars right by one.
+  for (let probe = headerRowIdx + 1; probe < Math.min(headerRowIdx + 6, rawRows.length); probe++) {
+    const peek = rawRows[probe] || [];
+    const v = String(peek[colParticulars] || "").trim();
+    if (/^(Dr|Cr|Dr\.|Cr\.)$/i.test(v) && peek[colParticulars + 1]
+        && String(peek[colParticulars + 1]).trim().length > 2) {
+      colParticulars = colParticulars + 1;
+      break;
+    }
+    if (v.length > 2) break; // first data row already has real content — layout is fine
+  }
+
   // Process data rows in pairs starting after header
   let i = headerRowIdx + 1;
   while (i < rawRows.length) {

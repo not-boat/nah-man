@@ -271,16 +271,21 @@
   }
 
   // ── Score a single pair of refs ─────────────────────────────────────────────
+  // Returns {score, method, exact} or null. `exact === true` means the two
+  // refs share the same full normalised value (same- or cross-kind) — this is
+  // the only situation that should bypass amount corroboration in the
+  // higher-level scorer. Everything else (suffix / fuzzy / last-N / bare
+  // short numeric) sets exact=false and must be combined with an amount match.
   function scoreSinglePair(ra, rb) {
     if (ra.value === rb.value) {
-      // Exact match — full strength of weaker side, capped 90 (90+ reserved for
-      // exact + corroboration in the higher-level scorer)
       const base = Math.min(ra.strength, rb.strength);
-      // If both are bare NUMERIC and short (<10 digits), cap at 35 — too risky
+      // Bare short NUMERIC matches (<10 digits) are NOT trustworthy on their
+      // own — could be an account number, invoice number, anything. Treat as
+      // partial so the higher-level scorer requires amount corroboration.
       if (ra.kind === "NUMERIC" && rb.kind === "NUMERIC" && ra.value.length < 10) {
-        return { score: 35, method: `Bare#${ra.value.slice(-6)}` };
+        return { score: 35, method: `Bare#${ra.value.slice(-6)}`, exact: false };
       }
-      return { score: Math.min(90, base), method: `${ra.kind} Exact` };
+      return { score: Math.min(90, base), method: `${ra.kind} Exact`, exact: true };
     }
 
     // Different lengths but one ends with the other (suffix match) — common
@@ -289,50 +294,63 @@
     const minLen = Math.min(a.length, b.length);
     if (minLen >= 6 && (a.endsWith(b) || b.endsWith(a))) {
       const base = Math.min(ra.strength, rb.strength) * 0.7;
-      return { score: Math.round(base), method: `${ra.kind} suffix=${a.slice(-Math.min(8, minLen))}` };
+      return {
+        score: Math.round(base),
+        method: `${ra.kind} suffix=${a.slice(-Math.min(8, minLen))}`,
+        exact: false,
+      };
     }
 
     // Last-6 / last-8 partial match for same-kind refs
     if (ra.kind === rb.kind && minLen >= 6 && a.slice(-6) === b.slice(-6)) {
-      // last-8 is meaningfully stronger than last-6
       const last8 = minLen >= 8 && a.slice(-8) === b.slice(-8);
       const score = last8 ? 45 : 28;
-      return { score, method: `${ra.kind} last-${last8 ? 8 : 6}` };
+      return { score, method: `${ra.kind} last-${last8 ? 8 : 6}`, exact: false };
     }
 
     // Levenshtein fuzzy on long, strong refs (catches OCR / 1-2 char typos)
     if (ra.strength >= 70 && rb.strength >= 70 && Math.min(a.length, b.length) >= 10) {
       const d = levenshtein(a, b);
-      if (d === 1) return { score: 65, method: `${ra.kind} ~1typo` };
-      if (d === 2) return { score: 45, method: `${ra.kind} ~2typo` };
+      if (d === 1) return { score: 65, method: `${ra.kind} ~1typo`, exact: false };
+      if (d === 2) return { score: 45, method: `${ra.kind} ~2typo`, exact: false };
     }
 
     return null;
   }
 
   // ── Score TWO ref arrays (best pairing wins, multi-match boosts) ────────────
+  // Returns { score, method, exact, exactCount, a, b } or null.
+  //   exact      — true iff the chosen best pair is a full-value match
+  //   exactCount — how many independent exact matches were found between the
+  //                two arrays (powers a multi-ref boost)
   function refsMatchScore(refsA, refsB) {
     if (!refsA || !refsB || !refsA.length || !refsB.length) return null;
     let best = null;
-    let matchCount = 0;
-    const seenMethods = [];
+    let matchCount = 0;   // any kind of match (incl. partial)
+    let exactCount = 0;   // strict exact-value matches only
     for (const ra of refsA) {
       for (const rb of refsB) {
         const r = scoreSinglePair(ra, rb);
         if (!r) continue;
         if (r.score >= 25) matchCount++;
-        if (!best || r.score > best.score) {
-          best = { ...r, a: ra, b: rb };
-          if (!seenMethods.includes(r.method)) seenMethods.push(r.method);
-        }
+        if (r.exact) exactCount++;
+        // Prefer exact pairings over equally-scoring partials. We do this by
+        // adding a tiny bias when comparing — this keeps the existing score
+        // values clean while ensuring `best.exact` reflects the strongest
+        // signal available.
+        const cmp = r.score + (r.exact ? 0.5 : 0);
+        const bestCmp = best ? best.score + (best.exact ? 0.5 : 0) : -1;
+        if (!best || cmp > bestCmp) best = { ...r, a: ra, b: rb };
       }
     }
     if (!best) return null;
-    // Multi-ref boost: if we found 2+ separate matches, add up to +10
-    if (matchCount >= 2) {
-      best.score = Math.min(95, best.score + Math.min(10, (matchCount - 1) * 5));
-      best.method += ` (+${matchCount - 1} more)`;
+    // Multi-ref boost — only when 2+ EXACT matches (suffix/fuzzy multi-matches
+    // are not trustworthy enough to compound).
+    if (exactCount >= 2) {
+      best.score = Math.min(95, best.score + Math.min(10, (exactCount - 1) * 5));
+      best.method += ` (+${exactCount - 1} exact)`;
     }
+    best.exactCount = exactCount;
     return best;
   }
 
