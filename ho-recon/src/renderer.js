@@ -177,13 +177,18 @@ function scorePair(src, cand, freqMap) {
   // ── Signal A: UTR / Reference matching (multi-ref aware) ───────────────────
   // Prefer the new refs[] arrays when present (populated by main.js parser).
   // Fall back to single-string scoreUTR for legacy/edge cases.
+  // utrIsExact distinguishes "two refs share the same full value" (a true
+  // anchor) from suffix / fuzzy / last-N partial matches, which must require
+  // amount corroboration before they're trusted.
   let utrScore = 0;
   let utrResult = null;
+  let utrIsExact = false;
   if (src.refs && cand.refs && src.refs.length && cand.refs.length
       && typeof RefsLib !== "undefined" && RefsLib.refsMatchScore) {
     const r = RefsLib.refsMatchScore(src.refs, cand.refs);
     if (r) {
       utrScore = r.score;
+      utrIsExact = !!r.exact;
       utrResult = { score: r.score, method: r.method };
       signals.push(r.method);
     }
@@ -192,6 +197,8 @@ function scorePair(src, cand, freqMap) {
     utrResult = scoreUTR(src.utr, cand.utr);
     if (utrResult) {
       utrScore = utrResult.score;
+      // Legacy scoreUTR's "UTR Exact" path is the only true exact-equivalent
+      utrIsExact = utrResult.method === "UTR Exact";
       signals.push(utrResult.method);
     }
   }
@@ -248,21 +255,25 @@ function scorePair(src, cand, freqMap) {
   }
 
   // ── Combine signals ────────────────────────────────────────────────────────
-  // The key rule: partial UTR alone (score < 40) ONLY counts if amount also matches
-  // Full UTR exact gets massive boost from any corroborating signal
+  // Key rule: only an EXACT full-value UTR match is allowed to bypass amount
+  // corroboration. Suffix / fuzzy / last-N partial matches (even if they
+  // happen to score ≥60) MUST be combined with an amount match — otherwise
+  // two unrelated entries that share the last 6 digits of a long ref could
+  // be auto-reconciled.
 
-  if (utrSignal >= 60) {
-    // Full UTR exact match — primary anchor, boost with corroborating signals
+  if (utrIsExact && utrSignal >= 60) {
+    // Full UTR/refs exact match — primary anchor, boost with corroborating signals
     score = utrSignal + amtScore + dateScore + narrScore;
-    // Cap at 100, but exact UTR + amount + date can reach ~100 naturally
     score = Math.min(100, score);
     method = utrResult?.method === "UTR Exact" ? "UTR Exact" : signals.join(" + ");
   } else if (utrSignal >= 35 && amountMatches) {
-    // Strong partial UTR (3/3 chunks or long shared ref) + amount = trustworthy
+    // Strong partial UTR / refs (3/3 chunks, suffix, last-8, fuzzy ~1typo,
+    // long shared narration ref) + amount = trustworthy
     score = utrSignal + amtScore + dateScore + narrScore;
     method = signals.join(" + ");
   } else if (utrSignal > 0 && amountMatches) {
-    // Weak partial UTR (last-4, last-5, 2/3 chunks) — only worth something WITH amount
+    // Weak partial UTR (last-4, last-5, 2/3 chunks, last-6) — only worth
+    // something WITH amount, and not enough on its own
     score = utrSignal + amtScore + dateScore;
     method = signals.join(" + ") + " ⚠partial-UTR";
   } else if (!utrSignal && amountMatches) {
@@ -270,7 +281,7 @@ function scorePair(src, cand, freqMap) {
     score = amtScore + dateScore + narrScore;
     method = signals.join(" + ");
   }
-  // If no amount match and no full UTR: score stays 0
+  // If no amount match and no exact UTR: score stays 0
 
   return { score: Math.round(score), method, signals };
 }
@@ -1147,6 +1158,8 @@ function renderResultsTab(container) {
   clearSearch.textContent = "✕ CLEAR";
   searchRow.append(searchInp, clearSearch);
 
+  const tab = S.resultsTab;
+
   // Approve All button — only shown on dateMismatch tab
   if (tab === "dateMismatch" && (R.dateMismatch||[]).length > 0) {
     const pending = (R.dateMismatch||[]).filter(r => !r.approved);
@@ -1176,7 +1189,6 @@ function renderResultsTab(container) {
   container.appendChild(searchRow);
 
   // Results table — rendered into a slot so search can swap body without full re-render
-  const tab = S.resultsTab;
   const tableSlot = DIV({});
   container.appendChild(tableSlot);
 
