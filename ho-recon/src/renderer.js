@@ -112,16 +112,41 @@ function amtEq(a, b) { return Math.abs(parseFloat(a) - parseFloat(b)) < 0.5; }
 // ── Narration token similarity ────────────────────────────────────────────────
 // Focuses on numeric tokens (account numbers, amounts, refs) which are more
 // reliable than name words — especially since Branch=customer name, HO=bank name
+//
+// Noise-token denylist: very common banking-narration filler that adds nothing
+// to similarity. Without this, "by transfer to ho" vs "by transfer hdfc bank"
+// scored a false-positive 0.5.
+const NARR_NOISE = new Set([
+  "the","and","for","via","with","from","into","upi","neft","rtgs","imps","cms",
+  "ref","utr","txn","trans","transaction","transfer","payment","paid","received",
+  "rcvd","credit","debit","credited","debited","amount","amt","rs","rupees","inr",
+  "by","to","of","in","on","ho","branch","bank","account","acc","acct","head",
+  "office","date","dated","cheque","chq","check","ltd","pvt","limited","private",
+]);
 function narrSim(a, b) {
   if (!a && !b) return 0;
   const tokens = s => String(s||"").toLowerCase()
-    .split(/[\s\/\-_,\(\)]+/)
-    .filter(t => t.length >= 3);
+    .split(/[\s\/\-_,\(\)\.\:]+/)
+    .filter(t => t.length >= 3 && !NARR_NOISE.has(t));
   const ta = new Set(tokens(a)), tb = new Set(tokens(b));
   if (!ta.size || !tb.size) return 0;
   let inter = 0;
   ta.forEach(t => { if (tb.has(t)) inter++; });
   return inter / Math.min(ta.size, tb.size);
+}
+
+// ── Fuzzy name similarity (Jaro-Winkler) ──────────────────────────────────────
+// Used for party / customer name matching where exact spelling can differ
+// ("Sree Durga Earth Movers" vs "SREE DURGHA EARTHMOVERS" → ~0.93).
+// Falls back to 0 if RefsLib isn't loaded for any reason.
+function nameSim(a, b) {
+  if (!a || !b) return 0;
+  if (typeof RefsLib === "undefined" || !RefsLib.jaroWinkler) return 0;
+  // Strip common corporate suffixes that don't help matching
+  const clean = s => String(s||"").toLowerCase()
+    .replace(/\b(pvt|ltd|limited|private|llp|inc|co|corp|corporation|company)\b/g," ")
+    .replace(/\s+/g," ").trim();
+  return RefsLib.jaroWinkler(clean(a), clean(b));
 }
 
 // Specifically look for shared numeric sequences (UTRs, account numbers)
@@ -149,16 +174,31 @@ function scorePair(src, cand, freqMap) {
   const sameDay   = diff === 0;
   const nearDay   = diff <= 2;
 
-  // ── Signal A: UTR ──────────────────────────────────────────────────────────
-  const utrResult = scoreUTR(src.utr, cand.utr);
+  // ── Signal A: UTR / Reference matching (multi-ref aware) ───────────────────
+  // Prefer the new refs[] arrays when present (populated by main.js parser).
+  // Fall back to single-string scoreUTR for legacy/edge cases.
   let utrScore = 0;
-  if (utrResult) {
-    utrScore = utrResult.score;
-    signals.push(utrResult.method);
+  let utrResult = null;
+  if (src.refs && cand.refs && src.refs.length && cand.refs.length
+      && typeof RefsLib !== "undefined" && RefsLib.refsMatchScore) {
+    const r = RefsLib.refsMatchScore(src.refs, cand.refs);
+    if (r) {
+      utrScore = r.score;
+      utrResult = { score: r.score, method: r.method };
+      signals.push(r.method);
+    }
+  }
+  if (!utrResult) {
+    utrResult = scoreUTR(src.utr, cand.utr);
+    if (utrResult) {
+      utrScore = utrResult.score;
+      signals.push(utrResult.method);
+    }
   }
 
   // ── Signal B: Shared numeric ref in narrations ─────────────────────────────
-  // (catches cases where UTR format differs payer vs receiver side)
+  // (catches cases where one side has a ref the parser didn't pick up — e.g.
+  // a long account number embedded in a comment field)
   const sharedRef = sharedNumericRef(src.narration, cand.narration);
   let sharedRefScore = 0;
   if (sharedRef && sharedRef.length >= 9) {
@@ -166,7 +206,7 @@ function scorePair(src, cand, freqMap) {
     signals.push(`SharedRef(${sharedRef.slice(-6)})`);
   }
 
-  // Take best of UTR match and shared narration ref
+  // Take best of UTR/refs match and shared narration ref
   const utrSignal = Math.max(utrScore, sharedRefScore);
 
   // ── Signal C: Amount ───────────────────────────────────────────────────────
@@ -192,6 +232,19 @@ function scorePair(src, cand, freqMap) {
     const ns = narrSim(src.narration, cand.narration);
     if (ns >= 0.6)      { narrScore = 12; signals.push(`Narr(${Math.round(ns*100)}%)`); }
     else if (ns >= 0.35){ narrScore = 6;  signals.push(`Narr(${Math.round(ns*100)}%)`); }
+
+    // Fuzzy name signal — catches "Sree Durga" vs "Sree Durgha", helpful when
+    // narration contains a customer/party name that's also on the other side.
+    // We compare narration↔party and party↔narration in both directions.
+    let bestName = 0;
+    [
+      [src.narration, cand.party],
+      [cand.narration, src.party],
+      [src.party,     cand.party],
+    ].forEach(([a,b]) => { if (a && b) bestName = Math.max(bestName, nameSim(a, b)); });
+    if (bestName >= 0.92)      { narrScore += 10; signals.push(`Name(${Math.round(bestName*100)}%)`); }
+    else if (bestName >= 0.85) { narrScore += 6;  signals.push(`Name(${Math.round(bestName*100)}%)`); }
+    else if (bestName >= 0.75) { narrScore += 3;  signals.push(`Name~`); }
   }
 
   // ── Combine signals ────────────────────────────────────────────────────────

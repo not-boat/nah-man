@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const path = require("path");
 const fs   = require("fs");
 const XLSX = require("xlsx");
+const Refs = require("./src/refs.js");
 
 let win;
 
@@ -269,32 +270,15 @@ function normalizeDate(d) {
   return s;
 }
 
-// ── UTR extractor — handles all formats seen in Tally narrations ──────────────
-function extractUTR(text) {
-  if (!text) return "";
-  const t = String(text);
-
-  // Explicit prefixes: utr-, utr , ref id -, ref-, ref id
-  const prefixed = t.match(/(?:utr[\s\-]*|ref(?:\s*id)?[\s\-]+)(\d{9,15}|[A-Z]{2,5}\d{6,20})/i);
-  if (prefixed) return prefixed[1].replace(/\s/g,"").toUpperCase();
-
-  // Bare 12-digit UPI UTR
-  const upi = t.match(/\b(\d{12})\b/);
-  if (upi) return upi[1];
-
-  // NEFT/IMPS/RTGS/CMS reference codes
-  const neft = t.match(/\b(N\d{8,}|[A-Z]{2,5}\d{8,20})\b/i);
-  if (neft) return neft[1].toUpperCase();
-
-  // Cheque number: "CHECK XXXXXXXXXXXXXXXX" or long numeric string
-  const chq = t.match(/check\s+(\d{10,})/i);
-  if (chq) return chq[1];
-
-  // Any 9-15 digit standalone number that looks like a ref
-  const num = t.match(/\b(\d{9,15})\b/);
-  if (num) return num[1];
-
-  return "";
+// ── UTR extractor — wraps the refs library for back-compat ──────────────────
+// extractUTR returns a single best-ref string for legacy callers.
+// extractRefsForEntry returns the full refs[] array (and the best UTR).
+function extractUTR(text, ownAmount) {
+  const refs = Refs.extractRefs(text, ownAmount);
+  return Refs.bestRef(refs);
+}
+function extractRefsForEntry(text, ownAmount) {
+  return Refs.extractRefs(text, ownAmount);
 }
 
 // ── Check if a cell value looks like a narration (vs a ledger/party name) ─────
@@ -405,7 +389,21 @@ function parseTallyExcel(rawRows, filePath) {
       }
     }
 
-    const utr = extractUTR(narration) || extractUTR(nameStr);
+    // Extract refs from narration first (most reliable), fall back to party name.
+    // Pass amount so the entry's own amount is filtered out as noise.
+    const refs = [
+      ...extractRefsForEntry(narration, amount),
+      ...extractRefsForEntry(nameStr,   amount),
+    ];
+    // De-duplicate refs (same value could appear in both narration and party)
+    const seen = new Set();
+    const dedupRefs = [];
+    for (const r of refs) {
+      if (seen.has(r.value)) continue;
+      seen.add(r.value);
+      dedupRefs.push(r);
+    }
+    const utr = Refs.bestRef(dedupRefs);
 
     entries.push({
       date:       normalizeDate(rawDate),
@@ -413,6 +411,7 @@ function parseTallyExcel(rawRows, filePath) {
       amount,
       debitCredit: debit > 0 ? "Dr" : "Cr",
       utr,
+      refs:       dedupRefs,
       narration,
       ref:        "",
       sourceFile: fname,
@@ -452,12 +451,14 @@ function parseTallyXML(text, filePath) {
       const raw = parseFloat(gl("AMOUNT").replace(/,/g,"")) || 0;
       const amt = Math.abs(raw);
       if (!amt) continue;
+      const xmlRefs = extractRefsForEntry(narration, amt);
       entries.push({
         date: normalizeDate(date),
         party: gl("LEDGERNAME"),
         amount: amt,
         debitCredit: raw < 0 ? "Dr" : "Cr",
-        utr: extractUTR(narration),
+        utr: Refs.bestRef(xmlRefs),
+        refs: xmlRefs,
         narration,
         ref: vchno,
         sourceFile: path.basename(filePath),
