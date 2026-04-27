@@ -312,25 +312,40 @@ function parseTallyExcel(rawRows, filePath) {
   const fname = path.basename(filePath);
   const entries = [];
 
-  // Find which columns contain date, particulars, debit, credit
-  // by scanning the header row (first non-empty row)
+  // Find which columns contain date, particulars, debit, credit, narration
+  // by scanning the header row (first non-empty row). Particulars and Narration
+  // are DISTINCT columns in the single-row-per-entry export format — treat them
+  // separately; fall back to treating whichever column we find as particulars
+  // if the export only has one of them.
   let headerRowIdx = -1;
-  let colDate = -1, colParticulars = -1, colDebit = -1, colCredit = -1;
+  let colDate = -1, colParticulars = -1, colDebit = -1, colCredit = -1, colNarration = -1;
 
   for (let i = 0; i < Math.min(rawRows.length, 20); i++) {
     const row = rawRows[i];
     for (let c = 0; c < row.length; c++) {
       const v = String(row[c]||"").toLowerCase().trim();
       if (v === "date" || v === "dt")                               colDate = c;
-      if (v === "particulars" || v === "narration" || v === "name"
-          || v === "ledger" || v === "description")                 colParticulars = c;
+      if (v === "particulars" || v === "name" || v === "ledger")   colParticulars = c;
+      if (v === "narration" || v === "narr" || v === "remarks"
+          || v === "description")                                  colNarration = c;
       if (v === "debit" || v === "dr" || v === "debit amount")     colDebit = c;
       if (v === "credit" || v === "cr" || v === "credit amount")   colCredit = c;
     }
-    if (colParticulars !== -1 && (colDebit !== -1 || colCredit !== -1)) {
+    // Accept the header row if we found either a Particulars or a Narration
+    // column alongside a Debit or Credit column (covers both old 2-row Tally
+    // exports and the new single-row exports).
+    if ((colParticulars !== -1 || colNarration !== -1) && (colDebit !== -1 || colCredit !== -1)) {
       headerRowIdx = i;
       break;
     }
+  }
+
+  // If the export only labelled Narration (no Particulars), treat it as the
+  // party column for legacy compatibility — this keeps very old 1-column
+  // exports working.
+  if (colParticulars === -1 && colNarration !== -1) {
+    colParticulars = colNarration;
+    colNarration = -1;
   }
 
   // Fallback: assume standard Tally column positions if header not found
@@ -389,10 +404,17 @@ function parseTallyExcel(rawRows, filePath) {
       continue;
     }
 
-    // Get narration from row below
+    // Get narration. Prefer the explicit Narration column on the same row
+    // (new single-row Tally export format). If that's absent, fall back to
+    // reading the row below (legacy 2-row format where narration / sub-ledger
+    // lives on the next row with no date and no amount).
     let narration = "";
     let narrRowIsNarration = false;
-    if (narrRow) {
+    if (colNarration !== -1) {
+      const sameRowNarr = String(mainRow[colNarration] || "").trim();
+      if (sameRowNarr) narration = sameRowNarr;
+    }
+    if (!narration && narrRow) {
       const narrDateVal  = narrRow[colDate];
       const narrAmtDebit = parseFloat(String(narrRow[colDebit]  || "").replace(/,/g,"")) || 0;
       const narrAmtCr    = parseFloat(String(narrRow[colCredit] || "").replace(/,/g,"")) || 0;
