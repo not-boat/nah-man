@@ -213,3 +213,72 @@ test("levenshtein: 1-character difference", () => {
 test("levenshtein: identical", () => {
   assert.equal(Refs.levenshtein("abc", "abc"), 0);
 });
+
+// ── `--<amount>` divider — must not be concatenated onto the UTR ────────────
+test("UTR with --amount divider: bank-prefix ref stays clean (Sai Enterprises)", () => {
+  const r = Refs.extractRefs("inv 252702397 sai enterprises ref no UBINH25305820666--568695/-", 568695);
+  const vals = values(r);
+  assert.ok(vals.includes("UBINH25305820666"), `UBIN ref must be clean (16 chars). got=${JSON.stringify(vals)}`);
+  assert.ok(!vals.includes("UBINH25305820666568695"), "amount must not be concatenated onto UTR");
+  // The amount must also be filtered out as a standalone numeric ref
+  assert.ok(!vals.includes("568695"), "amount filtered as own-amount");
+});
+
+test("UTR with --amount divider: NEFT HDFC ref stays clean", () => {
+  const r = Refs.extractRefs("inv 252810639 ref no BKIDN62025111132642415--37147-inv amt 28000", 28000);
+  const vals = values(r);
+  assert.ok(vals.includes("BKIDN62025111132642415"), `BKID ref must be clean. got=${JSON.stringify(vals)}`);
+  assert.ok(!vals.includes("BKIDN6202511113264241537147"), "amount must not be concatenated");
+});
+
+test("UTR with --amount divider: 12-digit UPI not affected (already worked)", () => {
+  const r = Refs.extractRefs("inv 252702450 utr no 985494211238--12850 Gayathri Infra concrete", 12850);
+  const vals = values(r);
+  assert.ok(vals.includes("985494211238"), "12-digit UPI extracted cleanly");
+  assert.ok(!vals.includes("98549421123812850"), "amount must not be concatenated");
+});
+
+// ── Cross-kind same-bank-prefix partial match ───────────────────────────────
+test("Cross-kind same-bank-prefix: IMPS UBINH vs RTGS UBINR with same last-6", () => {
+  const a = Refs.extractRefs("ref no UBINH25305820666", 568695);
+  const b = Refs.extractRefs("RTGS CR-UBIN0814776-UBINR22025110101820666", 568695);
+  const m = Refs.refsMatchScore(a, b);
+  assert.ok(m, "expected a match");
+  assert.ok(/cross-kind/.test(m.method), `expected cross-kind method, got ${m.method}`);
+  assert.ok(m.score >= 30, `expected score >= 30, got ${m.score}`);
+  assert.equal(m.exact, false, "cross-kind partial must require amount corroboration");
+});
+
+test("Cross-kind ONLY fires for known bank prefixes", () => {
+  // ZZZZH / ZZZZR — unknown prefix, should NOT cross-kind match
+  const a = [{ kind: "IMPS", value: "ZZZZH25305820666", strength: 80 }];
+  const b = [{ kind: "RTGS", value: "ZZZZR22025110101820666", strength: 88 }];
+  const m = Refs.refsMatchScore(a, b);
+  // No suffix endsWith, no same-kind last-6, unknown prefix → null
+  assert.equal(m, null, "unknown bank prefix must not cross-kind match");
+});
+
+// ── End-to-end: BR vs HO with --amount divider must reconcile via refs ─────
+test("End-to-end: BR `utr no 985494211238--12850` matches HO `UPI/985494211238/...` exactly", () => {
+  const br = Refs.extractRefs("inv 252702450 utr no 985494211238--12850 Gayathri Infra concrete", 12850);
+  const ho = Refs.extractRefs("UPI/985494211238/JCB tyre paymen/kalakondakumara/State Bank Of I/AXLcb6f26145da64fda817c8b23d5f22856", 12850);
+  const m = Refs.refsMatchScore(br, ho);
+  assert.ok(m, "should match");
+  assert.equal(m.exact, true, "must be exact UTR match");
+  assert.ok(m.score >= 80, `expected high score, got ${m.score}`);
+  assert.equal(m.method, "UPI Exact");
+});
+
+// ── NEFT/RTGS/IMPS labels in the LABELED regex ──────────────────────────────
+test("Labeled regex recognises `neft` / `rtgs` / `imps` / `upi` keywords", () => {
+  const cases = [
+    ["neft HDFCN24070112345", "HDFCN24070112345"],
+    ["rtgs UTIBR21345678",     "UTIBR21345678"],
+    ["imps 123412341234",      "123412341234"],
+    ["upi 412345678901",       "412345678901"],
+  ];
+  for (const [txt, want] of cases) {
+    const r = Refs.extractRefs(txt);
+    assert.ok(values(r).includes(want), `${txt} → expected ${want}, got ${JSON.stringify(values(r))}`);
+  }
+});
