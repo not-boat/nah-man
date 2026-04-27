@@ -1791,6 +1791,7 @@ async function doExportXlsx() {
         r.journalFYMonth||"", r.receiptFYMonth||"",
         r.tallyAlterEntry?.voucherRef||"", r.method||"", r.score||""
       ]) },
+    { name:"Manual Review",
       headers:["#","Source","Date","Party","Amt","UTR","Narr","Matched Party","Matched Amt","Score","Reason"],
       rows: R.manualReview.map((r,i) => {
         const src = r.source==="Suspense-Unmatched" ? r.suspense : (r.branch||r.ho);
