@@ -145,10 +145,19 @@
     const out = [];
     if (!text) return out;
     const re =
-      /(?:utr|ref(?:erence)?(?:[\s\.\-]*(?:id|no))?|txn(?:[\s\.\-]*(?:id|no))?|trans(?:action)?(?:[\s\.\-]*(?:id|no|ref))?|pay(?:ment)?(?:[\s\.\-]*(?:id|no))?|chq(?:[\s\.\-]*no)?|cheque(?:[\s\.\-]*no)?)\s*[\s:\-#\.]\s*([A-Z]{0,5}\d[A-Z0-9\-]{4,30})/gi;
+      /(?:utr|ref(?:erence)?(?:[\s\.\-]*(?:id|no))?|txn(?:[\s\.\-]*(?:id|no))?|trans(?:action)?(?:[\s\.\-]*(?:id|no|ref))?|pay(?:ment)?(?:[\s\.\-]*(?:id|no))?|chq(?:[\s\.\-]*no)?|cheque(?:[\s\.\-]*no)?|neft|rtgs|imps|upi)\s*[\s:\-#\.]\s*([A-Z]{0,5}\d[A-Z0-9\-]{4,30})/gi;
     let m;
     while ((m = re.exec(text)) !== null) {
-      const tok = normRef(m[1]);
+      // Truncate the captured value at the first `--` divider — Tally narrations
+      // commonly use `<UTR>--<AMOUNT>--<NAME>` and the amount/name are NOT
+      // part of the reference. Without this, normRef's strip-non-alphanumeric
+      // would concatenate the amount onto the UTR (e.g. `UBINH25305820666--568695`
+      // → `UBINH25305820666568695`), producing a corrupt 22-char ref that no
+      // longer matches the same UTR on the HO side.
+      let raw = String(m[1]);
+      const dividerIdx = raw.search(/--/);
+      if (dividerIdx >= 0) raw = raw.slice(0, dividerIdx);
+      const tok = normRef(raw);
       if (!tok || tok.length < 6) continue;
       if (isNoise(tok, ownAmount)) continue;
       const cls = classify(tok);
@@ -306,6 +315,27 @@
       const last8 = minLen >= 8 && a.slice(-8) === b.slice(-8);
       const score = last8 ? 45 : 28;
       return { score, method: `${ra.kind} last-${last8 ? 8 : 6}`, exact: false };
+    }
+
+    // Cross-kind partial match for IFSC bank-prefixed refs:
+    // The same UTR is sometimes booked as different kinds on the two sides
+    // (NEFT / RTGS / IMPS — H/R/I hint letters differ but the trailing UTR
+    // sequence is identical). Require both refs to start with the SAME 4-letter
+    // bank prefix from our known list, and the last 6+ digits to match.
+    const aPref = a.match(/^([A-Z]{4})/);
+    const bPref = b.match(/^([A-Z]{4})/);
+    if (aPref && bPref && aPref[1] === bPref[1] && BANK_PREFIXES.has(aPref[1])
+        && ra.kind !== rb.kind && minLen >= 8) {
+      const aDigits = a.replace(/[^0-9]/g, "");
+      const bDigits = b.replace(/[^0-9]/g, "");
+      if (aDigits.length >= 6 && bDigits.length >= 6 && aDigits.slice(-6) === bDigits.slice(-6)) {
+        const last8 = aDigits.length >= 8 && bDigits.length >= 8 && aDigits.slice(-8) === bDigits.slice(-8);
+        return {
+          score: last8 ? 50 : 32,
+          method: `${aPref[1]} cross-kind last-${last8 ? 8 : 6}`,
+          exact: false,
+        };
+      }
     }
 
     // Levenshtein fuzzy on long, strong refs (catches OCR / 1-2 char typos)

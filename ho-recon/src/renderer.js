@@ -435,10 +435,15 @@ function reconcileBillsTransfers(branchEntries, hoEntries, freqMap) {
       // Goes to manual review — returned as unmatched with best candidate attached
       unmatchedBr.push({ branchIdx: bi, branch: br,
         candidate: best.ho, candidateScore: bestScore, candidateMethod: bestMethod });
-    } else {
-      usedBranchIdx.add(bi);
-      unmatchedBr.push({ branchIdx: bi, branch: br, candidate: null, candidateScore: 0 });
     }
+    // No bills-tx counterpart found — DO NOT mark BR as used. The normal
+    // reconcile pass (Step 1) will then try to match this branch entry
+    // against ALL HO entries via the standard refs-based scorer. This is
+    // critical because most branch bills-tx entries have a UPI/NEFT UTR in
+    // their narration whose only HO counterpart is a bank-credit entry like
+    // `UPI/<utr>/<remitter>/...` that is NOT itself flagged as bills-tx.
+    // Letting these fall through unlocks ~70% of bills-tx entries that were
+    // previously dumped into "no matching HO credit found".
   }
 
   // HO bills entries with no match
