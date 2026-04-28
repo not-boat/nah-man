@@ -38,12 +38,12 @@ $("btnDebtors").addEventListener("click", async () => {
   $("debtorsStatus").textContent = "Loading…";
   const r = await window.api.parseDebtorsFile(filePath);
   if (!r.ok) {
-    $("debtorsStatus").innerHTML = `<span class="err">Error:</span> ${r.error}`;
+    $("debtorsStatus").innerHTML = `<span class="err">Error:</span> ${escapeHtml(r.error)}`;
     state.debtors = [];
   } else {
     state.debtorsFile = filePath;
     state.debtors = r.debtors;
-    $("debtorsStatus").innerHTML = `<span class="ok">${r.fileName}</span> · ${r.debtors.length} debtors loaded`;
+    $("debtorsStatus").innerHTML = `<span class="ok">${escapeHtml(r.fileName)}</span> · ${r.debtors.length} debtors loaded`;
   }
   refreshPreview();
 });
@@ -73,7 +73,7 @@ $("btnLedgerFolder").addEventListener("click", async () => {
   $("ledgersStatus").textContent = "Scanning folder…";
   const r = await window.api.parseLedgerFolder(folder);
   if (!r.ok) {
-    $("ledgersStatus").innerHTML = `<span class="err">Error:</span> ${r.error}`;
+    $("ledgersStatus").innerHTML = `<span class="err">Error:</span> ${escapeHtml(r.error)}`;
     return;
   }
   state.ledgersByCustomer = {};

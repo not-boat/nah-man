@@ -133,6 +133,55 @@ test("FIFO: zero / negative outstanding → []", () => {
 
 // ── Debtors parser ───────────────────────────────────────────────────────────
 
+// ── Regression: empty-key fuzzy match must not allocate to wrong ledger ─────
+//
+// A debtor whose name normalizes to "" (e.g. a stray separator row) used to
+// match the first ledger via "".startsWith("") and silently allocate that
+// debtor's outstanding to the wrong customer's invoices. Now it should land
+// in `unmatched`.
+//
+test("generateReport: debtor with name normalizing to empty does NOT match any ledger", () => {
+  const debtors = [
+    { customer: "DEVA JCB", outstanding: 1000 },
+    { customer: "---",      outstanding: 5000 },   // normalizes to ""
+  ];
+  const ledgersByCustomer = {
+    "DEVA JCB":  [{ date: 100, debit: 1000, narration: "ref inv.111111" }],
+    "OTHER CO": [{ date: 200, debit: 9999, narration: "ref inv.222222" }],
+  };
+  const result = O.generateReport({
+    debtors, ledgersByCustomer,
+    asOnSerial: 1000, branchLabel: "MYP & SRD",
+  });
+  // DEVA JCB → matched
+  // "---"    → unmatched (not silently allocated to whichever ledger comes first)
+  assert.equal(result.unmatched.length, 1);
+  assert.equal(result.unmatched[0].customer, "---");
+  assert.equal(result.rows.length, 1, "Only DEVA JCB should produce rows");
+  assert.equal(result.rows[0].customer, "DEVA JCB");
+});
+
+// ── Regression: parseDebtorsAoA must not combine column matches across rows ─
+test("parseDebtorsAoA: name keyword on row X and amount keyword on row Y don't get combined", () => {
+  const aoa = [
+    ["Particulars", "Some Other Header"], // has name but not amount
+    ["Foo Customer", 1234],
+    ["Whatever", "amount"],               // has amount but not name
+    ["Bar Customer", 5678],
+  ];
+  // Old buggy behavior: would combine col[0]=Particulars from row 0 with
+  // col[1]=amount from row 2 and treat row 2 as the header → skip rows 1+.
+  // New behavior: requires both keywords on the SAME row, so no header is
+  // found, falls back to col 0 = name, col 1 = amount, returns BOTH customers.
+  const out = O.parseDebtorsAoA(aoa);
+  // Row 0 itself fails the (numeric amount) filter — its second column is a
+  // string. Row 1 → "Foo Customer", 1234. Row 2 fails (amt is non-numeric
+  // "amount"). Row 3 → "Bar Customer", 5678. Total 2 entries.
+  const customers = out.map(o => o.customer);
+  assert.ok(customers.includes("Foo Customer"), "Foo Customer should be present");
+  assert.ok(customers.includes("Bar Customer"), "Bar Customer should be present");
+});
+
 test("parseDebtorsAoA: standard layout", () => {
   const aoa = [
     ["Particulars", "Debit"],

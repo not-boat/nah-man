@@ -126,17 +126,24 @@
     let headerIdx = -1, colName = -1, colAmt = -1;
     for (let i = 0; i < Math.min(aoa.length, 10); i++) {
       const row = aoa[i] || [];
+      // Use per-row locals so a name keyword on row X and an amount keyword
+      // on row Y > X aren't accidentally combined. Both must appear on the
+      // *same* row before we accept the header.
+      let foundName = -1, foundAmt = -1;
       for (let c = 0; c < row.length; c++) {
         const v = String(row[c] || "").toLowerCase().trim();
-        if (v === "particulars" || v === "name" || v === "customer" || v === "ledger") colName = c;
+        if (v === "particulars" || v === "name" || v === "customer" || v === "ledger") foundName = c;
         if (v === "debit" || v === "amount" || v === "outstanding" || v === "balance"
-            || v === "closing balance" || v === "closing") colAmt = c;
+            || v === "closing balance" || v === "closing") foundAmt = c;
       }
-      if (colName !== -1 && colAmt !== -1) { headerIdx = i; break; }
+      if (foundName !== -1 && foundAmt !== -1) {
+        colName = foundName; colAmt = foundAmt; headerIdx = i;
+        break;
+      }
     }
     if (headerIdx === -1) {
       // Fallback: assume col 0 = name, col 1 = amount, no header
-      colName = 0; colAmt = 1; headerIdx = -1;
+      colName = 0; colAmt = 1;
     }
     const out = [];
     for (let i = headerIdx + 1; i < aoa.length; i++) {
@@ -393,8 +400,16 @@
 
     for (const d of debtors) {
       const key = normalizeName(d.customer);
+      // Require a non-trivial key for fuzzy fallback. Without the `key &&`
+      // guard a debtor whose name normalizes to "" (e.g. a separator row
+      // like "---") would match the first ledger via "".startsWith(""), and
+      // its outstanding would be silently allocated to the wrong customer.
+      // We also require ≥ 3 chars to avoid spurious "AB" / "BA" overlaps.
       const ledgerKey = normMap.get(key)
-        || ledgerKeys.find(k => normalizeName(k).startsWith(key) || key.startsWith(normalizeName(k)));
+        || (key && key.length >= 3 && ledgerKeys.find(k => {
+             const nk = normalizeName(k);
+             return nk && (nk.startsWith(key) || key.startsWith(nk));
+           }));
       if (!ledgerKey) {
         unmatched.push({ customer: d.customer, outstanding: d.outstanding,
                           reason: "No ledger file found for this customer" });
