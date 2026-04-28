@@ -1,0 +1,35 @@
+{
+  "name": "os-report-maker",
+  "version": "1.0.0",
+  "description": "Outstanding (O/S) Report Maker — debtors + Tally ledger exports → MYP&SRD outstanding report",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test":  "node --test test/osreport.test.js",
+    "build": "electron-builder --win --x64",
+    "build-portable": "electron-builder --win portable --x64"
+  },
+  "build": {
+    "appId": "com.osreport.maker",
+    "productName": "O/S Report Maker",
+    "directories": { "output": "dist" },
+    "win": {
+      "target": [
+        { "target": "nsis",     "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "O/S Report Maker"
+    },
+    "files": ["main.js", "preload.js", "src/**/*", "node_modules/**/*"]
+  },
+  "dependencies": { "xlsx": "^0.18.5" },
+  "devDependencies": {
+    "electron":         "^28.0.0",
+    "electron-builder": "^24.0.0"
+  }
+}

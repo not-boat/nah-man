@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline';" />
+  <title>O/S Report Maker</title>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: #07080f; color: #dde1ee;
+                  font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; }
+    body { display: flex; flex-direction: column; overflow: hidden; }
+    .header { padding: 14px 20px; border-bottom: 1px solid #1a1c2a;
+              display: flex; align-items: baseline; gap: 12px; }
+    .header h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.2px; }
+    .header .sub { color: #6e7591; font-size: 11px; font-family: 'IBM Plex Mono', monospace; }
+    .body { flex: 1; overflow-y: auto; padding: 20px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px; }
+    .card { background: #0d0e17; border: 1px solid #1f2030; border-radius: 7px;
+            padding: 14px 16px; }
+    .card h2 { font-size: 12px; font-weight: 600; color: #aab1c8;
+                letter-spacing: 0.4px; text-transform: uppercase; margin-bottom: 10px; }
+    .card .hint { color: #6e7591; font-size: 11px; line-height: 1.5; margin-bottom: 12px; }
+    .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    button { font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+              background: #1f2030; color: #e3e7f8; border: 1px solid #2c2e44;
+              border-radius: 5px; padding: 7px 13px; cursor: pointer; transition: 0.1s; }
+    button:hover    { background: #2c2e44; border-color: #4a6fa5; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    button.primary  { background: #2a9d6a; border-color: #2a9d6a; color: white; }
+    button.primary:hover { background: #36b37b; border-color: #36b37b; }
+    input[type="date"], input[type="text"] {
+      font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+      background: #0d0e17; border: 1px solid #2c2e44; color: #c8cce0;
+      border-radius: 5px; padding: 6px 9px; outline: none;
+    }
+    input:focus { border-color: #4a6fa5; }
+    .status { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #6e7591; }
+    .ok       { color: #36b37b; }
+    .warn     { color: #e8b340; }
+    .err      { color: #e35d6a; }
+    .summary  { background: #0d0e17; border: 1px solid #1f2030; border-radius: 7px;
+                padding: 14px 16px; margin-top: 14px; }
+    .summary h2 { font-size: 12px; font-weight: 600; color: #aab1c8;
+                   letter-spacing: 0.4px; text-transform: uppercase; margin-bottom: 10px; }
+    table { width: 100%; border-collapse: collapse; font-family: 'IBM Plex Mono', monospace;
+             font-size: 11px; }
+    th { text-align: left; padding: 6px 10px; background: #161827; color: #aab1c8;
+          border-bottom: 1px solid #2c2e44; font-weight: 500; }
+    td { padding: 5px 10px; border-bottom: 1px solid #181a28; color: #c8cce0; }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .pill { display: inline-block; padding: 2px 7px; border-radius: 3px; font-size: 10px;
+             text-transform: uppercase; letter-spacing: 0.3px; }
+    .pill.ok       { background: #1c3328; color: #36b37b; }
+    .pill.short    { background: #3a2024; color: #e35d6a; }
+    .pill.missing  { background: #3a2e1c; color: #e8b340; }
+    .footer { padding: 12px 20px; border-top: 1px solid #1a1c2a;
+               display: flex; align-items: center; gap: 14px; }
+    .picked { color: #c8cce0; font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+               max-width: 100%; word-break: break-all; }
+    .scroll-x { overflow-x: auto; }
+    ::-webkit-scrollbar       { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0d0e17; }
+    ::-webkit-scrollbar-thumb { background: #252635; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>O/S Report Maker</h1>
+    <span class="sub">debtors + Tally ledgers → MYP&amp;SRD outstanding report</span>
+  </div>
+
+  <div class="body">
+    <div class="grid">
+
+      <div class="card">
+        <h2>① Debtors export</h2>
+        <div class="hint">From Tally: Display More Reports → Statements of Accounts → Outstandings → Group → Sundry Debtors → Alt+E → Excel.<br/>Two columns: Particulars, Debit.</div>
+        <div class="row">
+          <button id="btnDebtors">Choose file…</button>
+          <span id="debtorsStatus" class="status">No file selected</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>② Ledger exports</h2>
+        <div class="hint">Either pick individual ledger Excel files, or pick a folder containing one Excel per customer (drop-in for batch processing).</div>
+        <div class="row">
+          <button id="btnLedgers">Choose files…</button>
+          <button id="btnLedgerFolder">Choose folder…</button>
+          <span id="ledgersStatus" class="status">No ledgers loaded</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>③ As-on date</h2>
+        <div class="hint">Used for ageing buckets. Entries dated AFTER this are excluded (so the report is correct for the historical date you pick).</div>
+        <div class="row">
+          <input type="date" id="asOnDate" />
+          <span class="status">Defaults to today.</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>④ Branch label</h2>
+        <div class="hint">Goes in the "Branches" column of every output row. Default mirrors your existing template.</div>
+        <div class="row">
+          <input type="text" id="branchLabel" value="MYP &amp; SRD" />
+        </div>
+      </div>
+
+    </div>
+
+    <div class="summary" id="summaryCard" style="display: none;">
+      <h2>Preview <span id="previewCounts" class="status"></span></h2>
+      <div class="scroll-x">
+        <table id="previewTable">
+          <thead><tr>
+            <th>Customer</th><th class="num">Outstanding</th>
+            <th class="num">Picked</th><th class="num">Sum</th>
+            <th class="num">Variance</th><th>Status</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <button id="btnGenerate" class="primary" disabled>Generate O/S Report →</button>
+    <span id="generateStatus" class="status"></span>
+  </div>
+
+  <script src="osreport.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>
