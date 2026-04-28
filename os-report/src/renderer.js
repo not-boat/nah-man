@@ -145,17 +145,31 @@ $("btnGenerate").addEventListener("click", async () => {
   if (!state.lastResult) return;
   $("generateStatus").innerHTML = "<span>Saving…</span>";
   $("btnGenerate").disabled = true;
-  const r = await window.api.exportReport({
-    rows:           state.lastResult.rows,
-    reconciliation: state.lastResult.reconciliation,
-    unmatched:      state.lastResult.unmatched,
-    asOnSerial:     state.asOnSerial,
-    asOnLabel:      state.asOnLabel,
-  });
-  $("btnGenerate").disabled = false;
-  if (r.canceled) { $("generateStatus").innerHTML = "<span>Save canceled.</span>"; return; }
-  if (!r.ok)      { $("generateStatus").innerHTML = `<span class="err">Error: ${r.error || "unknown"}</span>`; return; }
-  $("generateStatus").innerHTML = `<span class="ok">Saved →</span> ${escapeHtml(r.path)}`;
+  try {
+    const r = await window.api.exportReport({
+      rows:           state.lastResult.rows,
+      reconciliation: state.lastResult.reconciliation,
+      unmatched:      state.lastResult.unmatched,
+      asOnSerial:     state.asOnSerial,
+      asOnLabel:      state.asOnLabel,
+    });
+    if (r.canceled) {
+      $("generateStatus").innerHTML = "<span>Save canceled.</span>";
+      return;
+    }
+    if (!r.ok) {
+      $("generateStatus").innerHTML = `<span class="err">Error: ${escapeHtml(r.error || "unknown")}</span>`;
+      return;
+    }
+    $("generateStatus").innerHTML = `<span class="ok">Saved →</span> ${escapeHtml(r.path)}`;
+  } catch (e) {
+    // Defensive fallback — IPC rejection (shouldn't happen now that the main
+    // handler returns { ok:false, error } instead of throwing, but if anything
+    // does slip through we surface it here rather than silently freezing the UI.
+    $("generateStatus").innerHTML = `<span class="err">Error: ${escapeHtml((e && e.message) || String(e))}</span>`;
+  } finally {
+    $("btnGenerate").disabled = false;
+  }
 });
 
 // ── Utilities ─────────────────────────────────────────────────────────────────

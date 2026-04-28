@@ -145,6 +145,7 @@ ipcMain.handle("parse-ledger-folder", async (_, folderPath) => {
 //     Customer | Outstanding | Reason
 //
 ipcMain.handle("export-report", async (_, payload) => {
+ try {
   const { rows, reconciliation, unmatched, asOnSerial, asOnLabel } = payload;
   const r = await dialog.showSaveDialog(win, {
     title: "Save Outstanding Report",
@@ -225,4 +226,11 @@ ipcMain.handle("export-report", async (_, payload) => {
   XLSX.writeFile(wb, r.filePath);
   shell.showItemInFolder(r.filePath);
   return { ok: true, path: r.filePath };
+ } catch (e) {
+  // Common cause: target file is open in Excel, locking the path.
+  const hint = /EBUSY|EACCES|EPERM|locked/i.test(String(e && e.message))
+    ? " (the target file may be open in Excel — close it and try again)"
+    : "";
+  return { ok: false, error: (e && e.message ? e.message : String(e)) + hint };
+ }
 });
