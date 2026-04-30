@@ -6,6 +6,14 @@ const Refs = require("./src/refs.js");
 
 let win;
 
+// Compact local-time timestamp `YYYYMMDD_HHmmss` for default export filenames.
+function ts() {
+  const d  = new Date();
+  const p  = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}` +
+         `_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1380, height: 860, minWidth: 1000, minHeight: 640,
